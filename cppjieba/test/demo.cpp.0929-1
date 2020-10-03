@@ -1,0 +1,259 @@
+#include "cppjieba/Jieba.hpp"
+#include <iostream>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <cmath>
+#include <list>
+#include <chrono>
+
+const char *const DICT_PATH = "../dict/jieba.dict.utf8";
+const char *const HMM_PATH = "../dict/hmm_model.utf8";
+const char *const USER_DICT_PATH = "../dict/user.dict.utf8";
+const char *const IDF_PATH = "../dict/idf.utf8";
+const char *const STOP_WORD_PATH = "../dict/stop_words.utf8";
+
+static int GetUtf8LetterNumber(const char *s)
+{
+  int i = 0, j = 0;
+  while (s[i])
+  {
+    if ((s[i] & 0xc0) != 0x80)
+      j++;
+    i++;
+  }
+  return j;
+}
+
+template <typename T>
+inline void printVec(const T &in, bool lf = true)
+{
+  if (in.size() < 0)
+    return;
+  int cnt = 0;
+  std::cout << "[";
+  for (auto item : in)
+  {
+    if (cnt > 0)
+      std::cout << ",";
+
+    std::cout << item;
+    ++cnt;
+  }
+  std::cout << "]";
+  if (lf)
+    std::cout << std::endl;
+}
+
+template <typename T, typename U>
+inline int countDupicate(T &i, U &v)
+{
+  if (v.size() <= 0)
+    return 0;
+
+  int cnt = 1;
+  for (auto k = i + 1; k < v.size(); ++k)
+  {
+    if (v[i] != v[k])
+      break;
+
+    ++i;
+    cnt += 1;
+  }
+
+  return cnt;
+}
+
+int main(int argc, char **argv)
+{
+
+  if (argc <= 1)
+  {
+    std::cout << "Please specify a data file to cut!" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  cppjieba::Jieba jieba(DICT_PATH,
+                        HMM_PATH,
+                        USER_DICT_PATH,
+                        IDF_PATH,
+                        STOP_WORD_PATH);
+  std::vector<std::string> words;
+  std::vector<std::string> fileData;
+  std::vector<std::vector<std::string>> fileDataCut;
+  std::vector<cppjieba::Word> jiebawords;
+  std::string s;
+  std::string result;
+
+  // Read file contents
+  std::ifstream fin;
+  fin.open(argv[1], std::ios::in);
+  std::stringstream buf;
+  buf << fin.rdbuf();
+
+  int cnt = 0;
+  for (std::string line; std::getline(buf, line);)
+  {
+    ++cnt;
+
+    // Skip blank
+    if (line.size() <= 0)
+      continue;
+
+    // Skip shorter or longer
+    int charNum = 0;
+    charNum = GetUtf8LetterNumber(line.c_str());
+    if (charNum <= 2 || charNum >= 20)
+      continue;
+
+    // std::cout << cnt << ":" << line << ":" << line.size() << ":" << charNum << std::endl;
+    fileData.push_back(line);
+    jieba.Cut(line, words, true);
+    std::sort(words.begin(), words.end());
+    fileDataCut.push_back(words);
+    // std::cout << limonp::Join(words.begin(), words.end(), "/") << std::endl;
+  }
+
+  std::cout << "Load data success!" << std::endl;
+  std::cout << "Total cnt:" << cnt << std::endl;
+  std::cout << "Valid cnt:" << fileData.size() << std::endl;
+
+  std::list<std::list<std::string>> allSimilarSentence;
+  // To find similrity
+  // std::vector<std::string> ABUnion;
+  for (int i = 0; i < fileDataCut.size(); ++i)
+  {
+    std::cout << "No.:" << i << std::endl;
+
+    auto stime = std::chrono::high_resolution_clock::now();
+
+    std::list<std::string> similarSentence;
+
+    for (int j = i + 1; j < fileDataCut.size(); ++j)
+    {
+      // printVec(fileDataCut[i]);
+      // printVec(fileDataCut[j]);
+
+      // int len = fileDataCut[i].size() + fileDataCut[j].size();
+      // AVec.reserve(len);
+      // BVec.reserve(len);
+      
+      auto &av = fileDataCut[i];
+      auto &bv = fileDataCut[j];
+      // auto m = 0;
+      // std::vector<int> AVec(len, 0);
+      // std::vector<int> BVec(len, 0);
+      // auto n = 0;
+      auto ia = 0;
+      auto ib = 0;
+      uint64_t AVecDot = 0;
+      uint64_t BVecDot = 0;
+
+      // Build A B root vector
+      uint64_t sum_ABdot = 0;
+      uint64_t sum_AAdot = 0;
+      uint64_t sum_BBdot = 0;
+
+      while (ia < av.size() && ib < bv.size())
+      {
+        // std::cout << " av[" << ia << "]=" << av[ia];
+        // std::cout << " bv[" << ib << "]=" << bv[ib] << std::endl;
+
+        if (av[ia] == bv[ib])
+        {
+          AVecDot = countDupicate(ia, av);
+          BVecDot = countDupicate(ib, bv);
+          ++ib;
+          ++ia;
+        }
+        else if (av[ia] < bv[ib])
+        {
+          AVecDot = countDupicate(ia, av);
+          BVecDot = 0;
+          ++ia;
+        }
+        else
+        {
+          AVecDot = 0;
+          BVecDot = countDupicate(ib, bv);
+          ++ib;
+        }
+
+        sum_ABdot += AVecDot * BVecDot;
+        sum_AAdot += AVecDot * AVecDot;
+        sum_BBdot += BVecDot * BVecDot;
+        // AVec[m] = AVecDot;
+        // BVec[m] = BVecDot;
+        // ++m;
+      }
+
+      while (ia < av.size())
+      {
+        AVecDot = countDupicate(ia, av);
+        BVecDot = 0;
+        
+        sum_ABdot += AVecDot * BVecDot;
+        sum_AAdot += AVecDot * AVecDot;
+        sum_BBdot += BVecDot * BVecDot;
+        ++ia;
+        // AVec[m] = AVecDot;
+        // BVec[m] = BVecDot;
+        // ++m;
+      }
+      
+      while (ib < bv.size())
+      {
+        BVecDot = countDupicate(ib, bv);
+        AVecDot = 0;
+
+        sum_ABdot += AVecDot * BVecDot;
+        sum_AAdot += AVecDot * AVecDot;
+        sum_BBdot += BVecDot * BVecDot;
+        ++ib;
+        // AVec[m] = AVecDot;
+        // BVec[m] = BVecDot;
+        // ++m;
+      }
+
+      // AVec.resize(m);
+      // BVec.resize(m);
+      // printVec(AVec);
+      // printVec(BVec);
+
+      // continue;
+    
+
+      //   sum_ABdot += AVec * BVec;
+      //   sum_AAdot += AVec * AVec;
+      //   sum_BBdot += BVec * BVec;
+      // }
+
+      // 0.334847938s
+
+      double cosineSimilarity = (double)sum_ABdot / (std::sqrt(sum_AAdot) * std::sqrt(sum_BBdot));
+      if (cosineSimilarity >= 0.8)
+      {
+        similarSentence.push_back(fileData[j]);
+      }
+    }
+
+    if (similarSentence.size() > 0)
+    {
+      similarSentence.push_front(fileData[i]);
+      allSimilarSentence.push_back(std::move(similarSentence));
+    }
+
+    auto etime = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = etime - stime;
+    std::cout << "elapse:" << std::fixed << std::setprecision(9) << diff.count() << "s" << std::endl;
+  }
+
+  for (auto item : allSimilarSentence)
+  {
+    std::cout << "(" << item.size() << ",";
+    printVec(item, false);
+    std::cout << ")" << std::endl;
+  }
+
+  return EXIT_SUCCESS;
+}
