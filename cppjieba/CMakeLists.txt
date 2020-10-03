@@ -10,9 +10,13 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set (CMAKE_INSTALL_PREFIX "/usr/local/cppjieba" CACHE PATH "default install path" FORCE )
 endif()
 
-ADD_DEFINITIONS(-O3 -Wall)
+ADD_DEFINITIONS(-O3 -Wall -std=c++17)
 IF(APPLE) # mac os
-    ADD_DEFINITIONS(-std=c++17)
+#   ADD_DEFINITIONS(-std=c++17)
+ELSEIF(UNIX)
+#   ADD_DEFINITIONS(-pthread) 
+#   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -std=c++17 -pthread")
+    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 endif()
 
 # cmake .. -DENC=GBK
