@@ -82,14 +82,15 @@ int main(int argc, char **argv)
   int ths_num = 1; // thread number
   float cos_value = 0;
   int sleep_time = 0; // In seconds
+  int verbose = 0;
 
   opts.add_options()
-  ("input,i", po::value<std::string>(), "the file which needs to parse.")
-  ("output,o", po::value<std::string>(), "the file which stores result.")
+  ("input,i", po::value<std::string>(), "the file(default:cin) which needs to parse.")
+  ("output,o", po::value<std::string>(), "the file(default:cout) which stores result.")
   ("ths-num,t", po::value<int>(&ths_num)->default_value(TH_NUM), "thread number")
   ("cos,c", po::value<float>(&cos_value)->default_value(COS_SIMLARITY), "the cosine similarity value")
   ("wait,w", po::value<int>(&sleep_time)->default_value(1), "The interval to show progress in seconds")
-  ("verbose,V", "verbose level to print")
+  ("verbose,V", po::value<int>(&verbose)->default_value(0), "verbose level to print")
   ("help,h", "This is tool to calculate sentence similarity")
   ;
 
@@ -136,12 +137,16 @@ int main(int argc, char **argv)
 
   if (vm.count("verbose"))
   {
+    verbose = vm["verbose"].as<int>();
+    if (verbose >= 1) {
     std::cout << "input file:" << input_file << std::endl;
     std::cout << "result file:" << result_file << std::endl;
     std::cout << "thread number:" << ths_num << std::endl;
     std::cout << "cos similarity:" << cos_value << std::endl;
     std::cout << "wait internal:" << sleep_time << std::endl;
+    }
   }
+
 
   /////////////////////////////////////////////////////
   cppjieba::Jieba jieba(DICT_PATH,
@@ -172,12 +177,13 @@ int main(int argc, char **argv)
   }
   else
   {
+    std::cout << "Please input two or more sentences to analyze:\n";
     buf << std::cin.rdbuf();
   }
-  
+
   if (!result_file.empty())
     fout.open(result_file, std::ios::out);
-  
+
   int cnt = 0;
   for (std::string line; std::getline(buf, line);)
   {
@@ -214,38 +220,82 @@ int main(int argc, char **argv)
     // std::cout << limonp::Join(words.begin(), words.end(), "/") << std::endl;
   }
 
+  if (fileData.size() < 2) {
+    std::cout << "Error: No enough input!\n";
+    return EXIT_FAILURE;
+  }
+
   // std::cout << "Load data success!" << std::endl;
-  std::cout << "Total cnt:" << cnt << std::endl;
-  // std::cout << "Valid cnt:" << fileData.size() << std::endl;
+  if (verbose >= 0)
+    std::cout << "Total cnt:" << cnt << " Valid cnt:" << fileData.size() << std::endl;
   // std::cout << "Key cnt:" << rootMap.size() << std::endl;
   // std::cout << "Key max number:" << rootNo << std::endl;
+  std::vector<int> th_start_cnt(ths_num, 0);
+  std::vector<int> th_end_cnt(ths_num, 0);
 
-  // int th_step = 0;
-  // if (fileDataCutNum.size() < ths_num)
-  // {
-  //   ths_num = fileDataCutNum.size(); // Reduce thread
-  //   th_step = 1;
-  // }
-  // else
-  // {
-  //   th_step = fileDataCutNum.size() / ths_num;
-  //   if (fileDataCutNum.size() % ths_num)
-  //     th_step += 1;
-  // }
+  // if (ths_num > 1) {
+    if (verbose >= 2)
+      std::cout << "Analyzing loop cnt for optimization." << std::endl;
 
+    auto valid_cnt = fileDataCutNum.size();
+    uint64_t loop_cnt = (valid_cnt*(valid_cnt-1))/2;
+    if (verbose >= 2)
+      std::cout << "Total loop cnt " << loop_cnt << std::endl;
+
+    uint64_t loop_th_mean = loop_cnt/ths_num;
+    if (loop_cnt%ths_num > 0)
+      loop_th_mean++;
+
+    if (verbose >= 2) {
+      std::cout << "Average loop cnt " << loop_th_mean << std::endl;
+      std::cout << "Total line loop cnt " << valid_cnt - 1 << std::endl;
+    }
+
+    int cur_th = 0;
+    uint64_t cur_cnt = 0;
+    for (size_t i = 0; i < valid_cnt - 1; ++i) {
+      // Start line
+      if (cur_cnt == 0) {
+        th_start_cnt[cur_th] = i;
+      }
+
+      cur_cnt += valid_cnt-(i+1);
+
+      // End line
+      if ((cur_cnt >= loop_th_mean) || (i == (valid_cnt - 1 - 1))) {
+        th_end_cnt[cur_th] = i+1;
+        if (verbose >= 2)
+          std::cout << "thread " << cur_th
+            << " line interval [" << th_start_cnt[cur_th] << "," << th_end_cnt[cur_th] << ")"
+            << " line cnt " << th_end_cnt[cur_th] - th_start_cnt[cur_th]
+            << " sub loop cnt " << cur_cnt << std::endl;
+
+        cur_cnt = 0;
+        ++cur_th;
+      }
+    }
+
+    if (cur_th < ths_num)
+    {
+      ths_num = cur_th;
+      if (verbose >= 2)
+        std::cout << "Reduce thread count to " << ths_num << '\n';
+    }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
   std::vector<std::list<std::list<std::string>>> ths_similarity(ths_num);
   std::vector<std::thread> ths;
   std::vector<int> th_prog(ths_num);
 
   for (auto th_i = 0; th_i < ths_num; ++th_i)
   {
-    ths.push_back(std::thread([&, th_i, ths_num] {
+    ths.push_back(std::thread([&, th_i] {
       // std::cout << "Start thread " << th_i << std::endl;
       auto &allSimilarSentence = ths_similarity[th_i];
 
-      for (int i = th_i; i < fileDataCutNum.size(); i += ths_num)
+      for (int i = th_start_cnt[th_i]; i < th_end_cnt[th_i]; ++i)
       {
-           
+
         th_prog[th_i]++;
         // std::cout << "th " << th_i << "No.:" << i << std::endl;
 
@@ -350,24 +400,26 @@ int main(int argc, char **argv)
     // ths.push_back(std::move(th));
   }
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   while (1)
   {
     int total = 0;
     for (int i = 0; i < th_prog.size(); ++i)
     {
-      std::cout << "thread[" << i << "]=" << th_prog[i] << " ";
+      if (verbose >= 1)
+        std::cout << "thread[" << i << "]=" << th_prog[i] << " ";
       total += th_prog[i];
     }
 
-    std::cout << "The rest ..." << fileDataCutNum.size() - total << std::endl;
+    if (verbose >= 0)
+      std::cout << "The rest ..." << fileDataCutNum.size() - 1 - total << std::endl;
 
-    if (total >= fileDataCutNum.size())
+    if (total >= fileDataCutNum.size() - 1)
       break;
-    
+
     if (sleep_time > 0)
       std::this_thread::sleep_for(std::chrono::seconds(sleep_time));
-  } 
+  }
 
   for (auto i = 0; i < ths.size(); ++i)
   {
